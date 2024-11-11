@@ -1,37 +1,29 @@
-// src-tauri/src/backend.rs
+// main.rs
 
 use csv::ReaderBuilder;
 use rand::distributions::{Distribution, Uniform};
 use rand::SeedableRng;
 use rand::rngs::StdRng;
 use statrs::statistics::Statistics;
-use serde::Serialize;
 use std::error::Error;
-use std::fmt;
 use std::path::Path;
-use tauri::command;
+use std::fmt;
+use std::process;
 
-/// Struct to hold the serialized results
-#[derive(Serialize)]
-pub struct RiskNormalizationResultSerializable {
-    pub safe_f_mean: f64,
-    pub safe_f_stdev: f64,
-    pub car25_mean: f64,
-    pub car25_stdev: f64,
-}
-
-/// Struct to hold the results
+// Struct to hold the results
 #[derive(Debug)]
-pub struct RiskNormalizationResult {
-    pub safe_f_mean: f64,
-    pub safe_f_stdev: f64,
-    pub car25_mean: f64,
-    pub car25_stdev: f64,
+struct RiskNormalizationResult {
+    safe_f_mean: f64,
+    safe_f_stdev: f64,
+    car25_mean: f64,
+    car25_stdev: f64,
 }
 
-/// Function to read trades from a CSV file
+// Function to read trades from a CSV file
 fn read_trades_from_csv<P: AsRef<Path>>(filename: P) -> Result<Vec<f64>, Box<dyn Error>> {
-    let mut rdr = ReaderBuilder::new().has_headers(false).from_path(filename)?;
+    let mut rdr = ReaderBuilder::new()
+        .has_headers(false)
+        .from_path(filename)?;
     let mut trades = Vec::new();
     for result in rdr.records() {
         let record = result?;
@@ -44,12 +36,12 @@ fn read_trades_from_csv<P: AsRef<Path>>(filename: P) -> Result<Vec<f64>, Box<dyn
     Ok(trades)
 }
 
-/// Function to compute mean of a slice
+// Function to compute mean of a slice
 fn compute_mean(data: &[f64]) -> f64 {
     data.mean()
 }
 
-/// Function to compute standard deviation of a slice
+// Function to compute standard deviation of a slice
 fn compute_std_dev(data: &[f64], mean: f64) -> f64 {
     let variance = data.iter().map(|value| {
         let diff = value - mean;
@@ -58,7 +50,7 @@ fn compute_std_dev(data: &[f64], mean: f64) -> f64 {
     variance.sqrt()
 }
 
-/// Function to calculate maximum drawdown from equity curve
+// Function to calculate maximum drawdown from equity curve
 fn calculate_drawdown(equity_curve: &[f64]) -> f64 {
     let mut peak = equity_curve[0];
     let mut max_drawdown = 0.0;
@@ -74,7 +66,7 @@ fn calculate_drawdown(equity_curve: &[f64]) -> f64 {
     max_drawdown
 }
 
-/// Function to calculate CAGR
+// Function to calculate CAGR
 fn calculate_cagr(initial_equity: f64, final_equity: f64, years: f64) -> f64 {
     if initial_equity <= 0.0 || final_equity <= 0.0 || years <= 0.0 {
         return 0.0;
@@ -82,7 +74,7 @@ fn calculate_cagr(initial_equity: f64, final_equity: f64, years: f64) -> f64 {
     ((final_equity / initial_equity).powf(1.0 / years) - 1.0) * 100.0
 }
 
-/// Function to simulate one equity sequence and calculate max drawdown
+// Function to simulate one equity sequence and calculate max drawdown
 fn make_one_equity_sequence(
     trades: &[f64],
     fraction: f64,
@@ -102,7 +94,7 @@ fn make_one_equity_sequence(
     (equity_curve, max_drawdown)
 }
 
-/// Function to analyze distribution of drawdowns and compute tail risk
+// Function to analyze distribution of drawdowns and compute tail risk
 fn analyze_distribution_of_drawdown(
     trades: &[f64],
     fraction: f64,
@@ -128,14 +120,14 @@ fn analyze_distribution_of_drawdown(
     count_exceed as f64 / number_equity_in_cdf as f64
 }
 
-/// Function to compute statistics
+// Function to compute statistics
 fn compute_statistics(data: &[f64]) -> (f64, f64) {
     let mean = compute_mean(data);
     let stdev = compute_std_dev(data, mean);
     (mean, stdev)
 }
 
-/// Module Error for better error messages
+// Module Error for better error messages
 #[derive(Debug)]
 struct RiskNormalizationError(String);
 
@@ -147,7 +139,7 @@ impl fmt::Display for RiskNormalizationError {
 
 impl Error for RiskNormalizationError {}
 
-/// risk_normalization function implementation
+// risk_normalization function implementation
 fn risk_normalization(
     trades: &[f64],
     number_days_in_forecast: usize,
@@ -163,7 +155,9 @@ fn risk_normalization(
     let mut safe_f_list = Vec::with_capacity(number_repetitions);
     let mut car25_list = Vec::with_capacity(number_repetitions);
 
-    let tail_target = tail_percentile / 100.0;
+    // // Initialize RNG with a fixed seed for reproducibility
+    // let seed: u64 = 42;
+    // let mut rng = StdRng::seed_from_u64(seed);
 
     for rep in 0..number_repetitions {
         let mut fraction = 1.0;
@@ -172,13 +166,15 @@ fn risk_normalization(
         let mut iteration = 0;
         let mut done = false;
 
+        let tail_target = tail_percentile / 100.0;
+
         let mut lower_bound = 0.0;
         let mut upper_bound = 10.0; // Arbitrary upper limit for fraction
-        let mut tail_risk = 0.0;
+        let mut _tail_risk = 0.0;
 
         while !done && iteration < max_iterations {
             fraction = (lower_bound + upper_bound) / 2.0;
-            tail_risk = analyze_distribution_of_drawdown(
+            _tail_risk = analyze_distribution_of_drawdown(
                 trades,
                 fraction,
                 number_trades_in_forecast,
@@ -188,9 +184,9 @@ fn risk_normalization(
                 rng,
             );
 
-            if (tail_risk - tail_target).abs() < tolerance {
+            if (_tail_risk - tail_target).abs() < tolerance {
                 done = true;
-            } else if tail_risk > tail_target {
+            } else if _tail_risk > tail_target {
                 upper_bound = fraction;
             } else {
                 lower_bound = fraction;
@@ -212,7 +208,7 @@ fn risk_normalization(
             );
 
             let years = number_days_in_forecast as f64 / 252.0;
-            let cagr = calculate_cagr(initial_capital, *equity_curve.last().unwrap(), years);
+            let cagr = calculate_cagr(initial_capital, equity_curve.last().unwrap().clone(), years);
             car_list.push(cagr);
         }
 
@@ -228,7 +224,10 @@ fn risk_normalization(
         car25_list.push(*car25);
 
         // Print Compound Annual Return for this repetition with high precision
-        println!("Compound Annual Return: {:.5}%", car25);
+        println!(
+            "Compound Annual Return: {:.5}%",
+            *car25
+        );
     }
 
     // Compute statistics for safe_f
@@ -245,41 +244,63 @@ fn risk_normalization(
     })
 }
 
-/// Tauri command to perform risk normalization
-#[command]
-pub fn risk_normalization_command() -> Result<RiskNormalizationResultSerializable, String> {
-    // Path to CSV within Tauri project
-    let path_to_trades = "./data/generated_normal_trades.csv";
+fn main() {
+    // Define the path to the CSV file
+    let base_path_to_trades = "./data/";
+    let file_name = "generated_normal_trades.csv";
+    let path_to_trades = format!("{}{}", base_path_to_trades, file_name);
+
+    println!("\nThe data file being processed is: {}", path_to_trades);
 
     // Read trades from CSV
-    let trades = read_trades_from_csv(path_to_trades).map_err(|e| e.to_string())?;
+    let trades = match read_trades_from_csv(&path_to_trades) {
+        Ok(t) => t,
+        Err(e) => {
+            eprintln!("Error reading trades: {}", e);
+            process::exit(1);
+        }
+    };
 
-    // Check if trades are empty
     if trades.is_empty() {
-        return Err("No trades data found.".into());
+        eprintln!("No trades data found.");
+        process::exit(1);
     }
 
-    // Set parameters
+    println!(
+        "There are {} marked-to-market daily trades in the file",
+        trades.len()
+    );
+    println!("Here are the first 10 trades:");
+    for trade in trades.iter().take(10) {
+        println!("{}", trade);
+    }
+
     let number_of_years_in_csv = 28.0;
     let average_trades_per_year = trades.len() as f64 / number_of_years_in_csv;
     let years_to_forecast = 2.0;
-    let number_days_in_forecast = (years_to_forecast * 252.0) as usize;
+
+    // Calculate number of days and trades in forecast period
+    let number_days_in_forecast = (years_to_forecast * 252.0) as usize; // Assuming 252 trading days per year
     let number_trades_in_forecast = (average_trades_per_year * years_to_forecast) as usize;
+
     let initial_capital = 100000.0;
     let tail_percentile = 5.0;
     let drawdown_tolerance = 0.10;
-    let number_equity_in_cdf = 10000;
+    let number_equity_in_cdf = 100000;
     let number_repetitions = 5;
 
-    // Initialize RNG
-    let seed: Option<u64> = None;
-    let mut rng = match seed {
+    // Define the seed option
+    let _seed: Option<u64> = Some(42); // None for random seed
+    let _seed: Option<u64> = None; // None for random seed
+
+    // Initialize RNG based on the seed
+    let mut rng = match _seed {
         Some(seed_value) => StdRng::seed_from_u64(seed_value),
         None => StdRng::from_entropy(),
     };
 
-    // Call the risk_normalization function
-    let result = risk_normalization(
+    // Call risk_normalization function
+    let result = match risk_normalization(
         &trades,
         number_days_in_forecast,
         number_trades_in_forecast,
@@ -289,14 +310,67 @@ pub fn risk_normalization_command() -> Result<RiskNormalizationResultSerializabl
         number_equity_in_cdf,
         number_repetitions,
         &mut rng,
-    )
-    .map_err(|e| e.to_string())?;
+    ) {
+        Ok(res) => res,
+        Err(e) => {
+            eprintln!("Error in risk_normalization: {}", e);
+            process::exit(1);
+        }
+    };
 
-    // Return the result
-    Ok(RiskNormalizationResultSerializable {
-        safe_f_mean: result.safe_f_mean,
-        safe_f_stdev: result.safe_f_stdev,
-        car25_mean: result.car25_mean,
-        car25_stdev: result.car25_stdev,
-    })
+    // Print results with high precision
+    println!(
+        "CAR25 mean:   {:.5}%",
+        result.car25_mean
+    );
+    println!(
+        "CAR25 stdev:  {:.5}",
+        result.car25_stdev
+    );
+    println!(
+        "safe-f mean:  {:.5}",
+        result.safe_f_mean
+    );
+    println!(
+        "safe-f stdev: {:.5}",
+        result.safe_f_stdev
+    );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_compute_mean() {
+        let data = vec![1.0, 2.0, 3.0, 4.0, 5.0];
+        assert_eq!(compute_mean(&data), 3.0);
+    }
+
+    #[test]
+    fn test_compute_std_dev() {
+        let data = vec![1.0, 2.0, 3.0, 4.0, 5.0];
+        let mean = 3.0;
+        let expected_std_dev = 1.414213; // Adjust as needed
+        let calculated_std_dev = compute_std_dev(&data, mean);
+        assert!((calculated_std_dev - expected_std_dev).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_calculate_drawdown() {
+        let equity_curve = vec![100.0, 110.0, 105.0, 115.0, 90.0];
+        assert!((calculate_drawdown(&equity_curve) - 0.2173913).abs() < 1e-5);
+    }
+
+    #[test]
+    fn test_calculate_cagr() {
+        let initial = 100.0;
+        let final_val = 200.0; // Renamed from `final` to `final_val`
+        let years = 2.0;
+        let expected_cagr = 41.421356;
+        let calculated_cagr = calculate_cagr(initial, final_val, years);
+        assert!((calculated_cagr - expected_cagr).abs() < 1e-5,
+            "Calculated CAGR: {:.6}, Expected CAGR: {:.6}",
+            calculated_cagr, expected_cagr);
+    }
 }
