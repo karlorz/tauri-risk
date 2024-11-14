@@ -10,6 +10,8 @@ use std::error::Error;
 use std::fmt;
 use std::path::Path;
 use tauri::command;
+use tauri::{AppHandle, Manager}; 
+use tauri::path::BaseDirectory; 
 
 /// Struct to hold the serialized results
 #[derive(Serialize)]
@@ -246,11 +248,14 @@ fn risk_normalization(
 }
 
 /// Tauri command to perform risk normalization
-#[command]
-pub fn risk_normalization_command() -> Result<RiskNormalizationResultSerializable, String> {
+#[tauri::command]
+pub fn risk_normalization_command(handle: AppHandle) -> Result<RiskNormalizationResultSerializable, String> {
     // Path to CSV within Tauri project
-    let path_to_trades = "./data/generated_normal_trades.csv";
-
+    // let path_to_trades = "./resources/generated_normal_trades.csv";
+    let resource_path = handle.path().resolve("resources/generated_normal_trades.csv", BaseDirectory::Resource)
+        .map_err(|e| e.to_string())?;
+    
+    let path_to_trades = resource_path.as_path();
     // Read trades from CSV
     let trades = read_trades_from_csv(path_to_trades).map_err(|e| e.to_string())?;
 
