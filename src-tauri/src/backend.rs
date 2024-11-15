@@ -1,17 +1,43 @@
 // src-tauri/src/backend.rs
 
+use tauri::path::BaseDirectory;
+use tauri::{AppHandle, Manager}; // Import Manager trait and AppHandle // Import BaseDirectory enum
+
 use csv::ReaderBuilder;
 use rand::distributions::{Distribution, Uniform};
-use rand::SeedableRng;
 use rand::rngs::StdRng;
+use rand::SeedableRng;
+use serde::{Deserialize, Serialize};
 use statrs::statistics::Statistics;
-use serde::Serialize;
 use std::error::Error;
 use std::fmt;
+use std::fs::File;
 use std::path::Path;
-use tauri::command;
-use tauri::{AppHandle, Manager}; 
-use tauri::path::BaseDirectory; 
+
+const CSV_FILE: &str = include_str!("../resources/generated_normal_trades.csv");
+
+#[tauri::command]
+fn get_csv() -> String {
+    CSV_FILE.to_string()
+}
+
+/// Reads trades from a CSV string using Serde deserialization.
+fn read_trades_from_str(data: &str) -> Result<Vec<f64>, Box<dyn Error>> {
+    // Initialize the CSV reader with headers.
+    let mut rdr = ReaderBuilder::new()
+        .has_headers(true) // Set to false if your CSV doesn't have headers.
+        .from_reader(data.as_bytes());
+
+    let mut trades = Vec::new();
+
+    // Iterate over each record and deserialize into `TradeRecord`.
+    for result in rdr.deserialize() {
+        let record: TradeRecord = result?; // Deserialize the record.
+        trades.push(record.value); // Extract the `value` field.
+    }
+
+    Ok(trades)
+}
 
 /// Struct to hold the serialized results
 #[derive(Serialize)]
@@ -31,18 +57,30 @@ pub struct RiskNormalizationResult {
     pub car25_stdev: f64,
 }
 
-/// Function to read trades from a CSV file
-fn read_trades_from_csv<P: AsRef<Path>>(filename: P) -> Result<Vec<f64>, Box<dyn Error>> {
-    let mut rdr = ReaderBuilder::new().has_headers(false).from_path(filename)?;
+#[derive(Debug, Deserialize)]
+struct TradeRecord {
+    #[serde(rename = "value")] // Adjust the field name based on your CSV header
+    value: f64,
+}
+
+/// Reads trades from a CSV file using Serde deserialization.
+fn read_trades_from_csv(path: &Path) -> Result<Vec<f64>, Box<dyn Error>> {
+    // Open the CSV file.
+    let file = File::open(path)?;
+
+    // Initialize the CSV reader with headers.
+    let mut rdr = ReaderBuilder::new()
+        .has_headers(true) // Set to false if your CSV doesn't have headers.
+        .from_reader(file);
+
     let mut trades = Vec::new();
-    for result in rdr.records() {
-        let record = result?;
-        for field in record.iter() {
-            if let Ok(value) = field.parse::<f64>() {
-                trades.push(value);
-            }
-        }
+
+    // Iterate over each record and deserialize into `TradeRecord`.
+    for result in rdr.deserialize() {
+        let record: TradeRecord = result?; // Deserialize the record.
+        trades.push(record.value); // Extract the `value` field.
     }
+
     Ok(trades)
 }
 
@@ -53,10 +91,14 @@ fn compute_mean(data: &[f64]) -> f64 {
 
 /// Function to compute standard deviation of a slice
 fn compute_std_dev(data: &[f64], mean: f64) -> f64 {
-    let variance = data.iter().map(|value| {
-        let diff = value - mean;
-        diff * diff
-    }).sum::<f64>() / data.len() as f64;
+    let variance = data
+        .iter()
+        .map(|value| {
+            let diff = value - mean;
+            diff * diff
+        })
+        .sum::<f64>()
+        / data.len() as f64;
     variance.sqrt()
 }
 
@@ -249,15 +291,11 @@ fn risk_normalization(
 
 /// Tauri command to perform risk normalization
 #[tauri::command]
-pub fn risk_normalization_command(handle: AppHandle) -> Result<RiskNormalizationResultSerializable, String> {
-    // Path to CSV within Tauri project
-    // let path_to_trades = "./resources/generated_normal_trades.csv";
-    let resource_path = handle.path().resolve("resources/generated_normal_trades.csv", BaseDirectory::Resource)
-        .map_err(|e| e.to_string())?;
-    
-    let path_to_trades = resource_path.as_path();
-    // Read trades from CSV
-    let trades = read_trades_from_csv(path_to_trades).map_err(|e| e.to_string())?;
+pub fn risk_normalization_command(
+    handle: AppHandle,
+) -> Result<RiskNormalizationResultSerializable, String> {
+    // Parse trades from the embedded CSV data
+    let trades = read_trades_from_str(CSV_FILE).map_err(|e| e.to_string())?;
 
     // Check if trades are empty
     if trades.is_empty() {
@@ -273,7 +311,7 @@ pub fn risk_normalization_command(handle: AppHandle) -> Result<RiskNormalization
     let initial_capital = 100000.0;
     let tail_percentile = 5.0;
     let drawdown_tolerance = 0.10;
-    let number_equity_in_cdf = 10000;
+    let number_equity_in_cdf = 100000;
     let number_repetitions = 5;
 
     // Initialize RNG
